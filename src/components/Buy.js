@@ -20,7 +20,7 @@ const Buy = ({ provider, price, crowdsale, setIsLoading }) => {
 
 			// We need to calculate the required ETH in order to buy the tokens...
 			const value = ethers.utils.parseUnits((amount * price).toString(), 'ether')
-			const formattedAmount = ethers.utils.parseUnits(amount.tostring(), 'ether')
+			const formattedAmount = ethers.utils.parseUnits(amount.toString(), 'ether')
 
 			const transaction = await crowdsale.connect(signer).buyTokens(formattedAmount, { value: value })
 			await transaction.wait()
@@ -29,8 +29,7 @@ const Buy = ({ provider, price, crowdsale, setIsLoading }) => {
 		} catch {
 		window.alert('User rejected or transaction reverted')
 		}
-
-
+		
 
 		setIsLoading(true)
 	}

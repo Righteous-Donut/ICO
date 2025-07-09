@@ -7,8 +7,8 @@
 const hre = require("hardhat");
 
 async function main() {
-  const NAME = 'Dapp University'
-  const SYMBOL = 'DAPP'
+  const NAME = 'Peace Token'
+  const SYMBOL = 'PEACE'
   const MAX_SUPPLY = '1000000'
   const PRICE = ethers.utils.parseUnits('0.025', 'ether')
 
@@ -16,12 +16,12 @@ async function main() {
 
   // Deploy Token
   const Token = await hre.ethers.getContractFactory('Token')
-  let token = await Token.deploy(NAME, SYMBOL, MAX_SUPPLY)
+  const token = await Token.deploy(NAME, SYMBOL, MAX_SUPPLY)
 
   await token.deployed()
   console.log(`Token deployed to: ${token.address}\n`)
 
-  // Deply Crowdsale
+  // Deploy Crowdsale
   const Crowdsale = await hre.ethers.getContractFactory('Crowdsale')
   const crowdsale = await Crowdsale.deploy(token.address, PRICE, ethers.utils.parseUnits(MAX_SUPPLY, 'ether'))
   await crowdsale.deployed();

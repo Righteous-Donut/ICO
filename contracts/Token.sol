@@ -31,6 +31,7 @@ contract Token {
     ) {
         name = _name;
         symbol = _symbol;
+        decimals = 18;
         totalSupply = _totalSupply * (10**decimals);
         balanceOf[msg.sender] = totalSupply;
     }
