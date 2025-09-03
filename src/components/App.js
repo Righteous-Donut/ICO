@@ -7,24 +7,25 @@ import { RainbowKitProvider } from "@rainbow-me/rainbowkit";
 import "@rainbow-me/rainbowkit/styles.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ethers } from "ethers";
-import '../styles/App.css';
+import "../styles/App.css";
 
 // Components
 import Navigation from "./Navigation";
-import Buy from './Buy';
-import Info from './Info';
-import Progress from './Progress';
-import Loading from './Loading';
+import Buy from "./Buy";
+import Info from "./Info";
+import Progress from "./Progress";
+import Loading from "./Loading";
 
 // ABIs
-import TOKEN_ABI from '../abis/Token.json';
-import CROWDSALE_ABI from '../abis/Crowdsale.json';
+import TOKEN_ABI from "../abis/Token.json";
+import CROWDSALE_ABI from "../abis/Crowdsale.json";
 
-// Config
-import config from '../config.json';
+// Config (addresses per chainId)
+import config from "../config.json";
 
 const queryClient = new QueryClient();
 
+// Wagmi/RainbowKit config
 const wagmiConfig = createConfig({
   connectors: [
     injected({ shimDisconnect: true }),
@@ -37,7 +38,7 @@ const wagmiConfig = createConfig({
   transports: {
     [mainnet.id]: http(`https://eth-mainnet.g.alchemy.com/v2/${process.env.REACT_APP_ALCHEMY_API_KEY}`),
     [sepolia.id]: http(`https://eth-sepolia.g.alchemy.com/v2/${process.env.REACT_APP_ALCHEMY_API_KEY}`),
-    [hardhat.id]: http(), // localhost:8545
+    [hardhat.id]: http("http://127.0.0.1:8545"), // explicit localhost
   },
 });
 
@@ -46,50 +47,96 @@ function App() {
   const [crowdsale, setCrowdsale] = useState(null);
 
   const [account, setAccount] = useState(null);
-  const [accountBalance, setAccountBalance] = useState(0);
+  const [accountBalance, setAccountBalance] = useState("0");
 
-  const [price, setPrice] = useState(0);
-  const [maxTokens, setMaxTokens] = useState(0);
-  const [tokensSold, setTokensSold] = useState(0);
+  const [price, setPrice] = useState("0");
+  const [maxTokens, setMaxTokens] = useState("0");
+  const [tokensSold, setTokensSold] = useState("0");
 
+  const [chainId, setChainId] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [unsupportedNetwork, setUnsupportedNetwork] = useState(false);
 
   const loadBlockchainData = async () => {
     try {
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
-      setProvider(provider);
+      if (!window.ethereum) {
+        console.warn("No injected provider (window.ethereum) found.");
+        setIsLoading(false);
+        return;
+      }
 
-      const { chainId } = await provider.getNetwork();
+      const web3Provider = new ethers.providers.Web3Provider(window.ethereum);
+      setProvider(web3Provider);
 
-      const token = new ethers.Contract(config[chainId].token.address, TOKEN_ABI, provider);
-      const crowdsale = new ethers.Contract(config[chainId].crowdsale.address, CROWDSALE_ABI, provider);
-      setCrowdsale(crowdsale);
+      // Request accounts and network
+      const [selected] = await window.ethereum.request({ method: "eth_requestAccounts" });
+      const net = await web3Provider.getNetwork();
+      const id = Number(net.chainId);
+      setChainId(id);
 
-      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-      const account = ethers.utils.getAddress(accounts[0]);
-      setAccount(account);
+      // Ensure we have config for this chain
+      const netConfig = config[String(id)];
+      if (!netConfig || !netConfig.token?.address || !netConfig.crowdsale?.address) {
+        console.warn(`No contract addresses configured for chainId ${id}.`);
+        setUnsupportedNetwork(true);
+        setIsLoading(false);
+        return;
+      }
 
-      const accountBalance = ethers.utils.formatUnits(await token.balanceOf(account), 18);
-      setAccountBalance(accountBalance);
+      // Setup contracts (read-only via provider)
+      const token = new ethers.Contract(netConfig.token.address, TOKEN_ABI, web3Provider);
+      const sale = new ethers.Contract(netConfig.crowdsale.address, CROWDSALE_ABI, web3Provider);
+      setCrowdsale(sale);
 
-      const price = ethers.utils.formatUnits(await crowdsale.price(), 18);
-      setPrice(price);
+      const checksum = ethers.utils.getAddress(selected);
+      setAccount(checksum);
 
-      const maxTokens = ethers.utils.formatUnits(await crowdsale.maxTokens(), 18);
-      setMaxTokens(maxTokens);
+      // Parallel reads
+      const [bal, rawPrice, rawMax, rawSold] = await Promise.all([
+        token.balanceOf(checksum),
+        sale.price(),
+        sale.maxTokens(),
+        sale.tokensSold(),
+      ]);
 
-      const tokensSold = ethers.utils.formatUnits(await crowdsale.tokensSold(), 18);
-      setTokensSold(tokensSold);
+      setAccountBalance(ethers.utils.formatUnits(bal, 18));
+      setPrice(ethers.utils.formatUnits(rawPrice, 18));
+      setMaxTokens(ethers.utils.formatUnits(rawMax, 18));
+      setTokensSold(ethers.utils.formatUnits(rawSold, 18));
 
       setIsLoading(false);
     } catch (err) {
       console.error("Blockchain data loading failed:", err);
+      // Always release the spinner so the page doesn’t look blank
+      setIsLoading(false);
     }
   };
 
+  // Reload when the page mounts or when user switches chain/accounts
   useEffect(() => {
-    if (isLoading) loadBlockchainData();
-  }, [isLoading]);
+    loadBlockchainData();
+
+    if (window.ethereum) {
+      const handleChainChanged = () => {
+        setIsLoading(true);
+        setUnsupportedNetwork(false);
+        loadBlockchainData();
+      };
+      const handleAccountsChanged = () => {
+        setIsLoading(true);
+        loadBlockchainData();
+      };
+
+      window.ethereum.on?.("chainChanged", handleChainChanged);
+      window.ethereum.on?.("accountsChanged", handleAccountsChanged);
+
+      return () => {
+        window.ethereum.removeListener?.("chainChanged", handleChainChanged);
+        window.ethereum.removeListener?.("accountsChanged", handleAccountsChanged);
+      };
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -97,24 +144,39 @@ function App() {
         <RainbowKitProvider chains={[mainnet, sepolia, hardhat]}>
           <Container>
             <Navigation />
-            <h1 className='my-4 text-center'>Introducing Peace Token</h1>
+            <h1 className="my-4 text-center">Introducing Peace Token</h1>
 
-            {isLoading ? (
-              <Loading />
-            ) : (
+            {isLoading && <Loading />}
+
+            {!isLoading && unsupportedNetwork && (
+              <div
+                style={{
+                  margin: "1rem auto",
+                  maxWidth: 720,
+                  padding: "1rem",
+                  borderRadius: 8,
+                  background: "#fff3cd",
+                  color: "#664d03",
+                  border: "1px solid #ffe69c",
+                }}
+              >
+                <strong>Unsupported network:</strong> No contract addresses configured for{" "}
+                <code>chainId {chainId ?? "unknown"}</code>. Please switch to{" "}
+                <strong>Localhost (31337)</strong>, <strong>Sepolia (11155111)</strong>, or{" "}
+                <strong>Mainnet (1)</strong>, and ensure <code>config.json</code> has the correct addresses.
+              </div>
+            )}
+
+            {!isLoading && !unsupportedNetwork && (
               <>
-                <p className='text-center'>
+                <p className="text-center">
                   <strong>Current Price:</strong> {price} ETH
                 </p>
                 <Buy provider={provider} price={price} crowdsale={crowdsale} setIsLoading={setIsLoading} />
                 <Progress maxTokens={maxTokens} tokensSold={tokensSold} />
+                <hr />
+                {account && <Info account={account} accountBalance={accountBalance} />}
               </>
-            )}
-
-            <hr />
-
-            {account && (
-              <Info account={account} accountBalance={accountBalance} />
             )}
           </Container>
         </RainbowKitProvider>
